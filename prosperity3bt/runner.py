@@ -34,6 +34,43 @@ def prepare_state(state: TradingState, data: BacktestData) -> None:
         state.listings[product] = Listing(product, product, 1)
 
 
+def get_market_maker_mid(order_depth: OrderDepth, min_volume: int = 15) -> float:
+    """
+    Calculate the mid price considering only market maker orders (volume >= min_volume).
+    Falls back to regular mid price if no market maker orders are found.
+    """
+    # check for bid and ask with volume >= min_volume
+    mm_bids = [price for price in order_depth.buy_orders.keys() if order_depth.buy_orders[price] >= min_volume]
+    mm_asks = [price for price in order_depth.sell_orders.keys() if abs(order_depth.sell_orders[price]) >= min_volume]
+    
+    # If we have market maker bids and asks, use them
+    if mm_bids and mm_asks:
+        bid = max(mm_bids)
+        ask = min(mm_asks)
+        return bid + (ask - bid) / 2
+    
+    # If we only have market maker bids
+    elif mm_bids and order_depth.sell_orders:
+        bid = max(mm_bids)
+        ask = min(order_depth.sell_orders.keys())
+        return bid + (ask - bid) / 2
+    
+    # If we only have market maker asks
+    elif mm_asks and order_depth.buy_orders:
+        bid = max(order_depth.buy_orders.keys())
+        ask = min(mm_asks)
+        return bid + (ask - bid) / 2
+    
+    # Fall back to regular mid price calculation if no market maker orders
+    elif order_depth.buy_orders and order_depth.sell_orders:
+        bid = max(order_depth.buy_orders.keys())
+        ask = min(order_depth.sell_orders.keys())
+        return bid + (ask - bid) / 2
+    
+    # If we have no buy or sell orders, return the provided mid price or a default
+    return 0.0
+
+
 def create_activity_logs(
     state: TradingState,
     data: BacktestData,
@@ -46,7 +83,11 @@ def create_activity_logs(
 
         position = state.position.get(product, 0)
         if position != 0:
-            product_profit_loss += position * row.mid_price
+            # Use market maker mid price instead of regular mid price
+            mm_mid_price = get_market_maker_mid(state.order_depths[product])
+            # If mm_mid_price is 0 (no orders), fall back to the provided mid price
+            mark_price = mm_mid_price if mm_mid_price != 0.0 else row.mid_price
+            product_profit_loss += position * mark_price
 
         bid_prices_len = len(row.bid_prices)
         bid_volumes_len = len(row.bid_volumes)
